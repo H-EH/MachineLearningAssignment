@@ -1,0 +1,147 @@
+---
+title: "Practical Machine Learning Course Project - Prediction on Manners of Exercising"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+---
+##### Assignment Background  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).  
+
+Data source  
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har.    
+
+
+### Exploratory Analysis of the training Data  
+Base on some exploratory analysis of the training set (see Appendix), we see that the training set contains observations with 160 variables, alot of which contains NA. There are 19622 observations in the training set.   
+
+```{r libraries, message=FALSE, tidy=TRUE, warning=FALSE}
+## List of libraries used in this Exercise
+library(ggplot2)
+library(caret)
+library(randomForest)
+```
+
+### Load the data sets and cache it   
+```{r dataset, cache=TRUE, message=FALSE, tidy=TRUE, warning=FALSE}
+## Load the 2 data sets and setting missing values NAs/#DIV/0!/spaces to NA 
+pml_Training <- read.csv("pml-training.csv", header = TRUE, na.strings=c("NA","#DIV/0!",""))
+pml_Testing <- read.csv("pml-testing.csv", header = TRUE, na.strings=c("NA","#DIV/0!",""))
+```
+
+### Data Cleansing of Training set  
+Run nearZeroVar to find zero variance predictors.  
+Remove the following to ensure more accurate predictions :  
+(1) variables with more than 60% missing values given the number of training records is not large.  
+(2) remove near zero variables that are not going to help in the prediction process  
+(3) other redundant variables - eg. X  
+  
+```{r cleanSet, cache=TRUE, message=FALSE, tidy=TRUE, warning=FALSE}
+# find near zero variables using Caret's nearZeroVar function
+nzv_col <- nearZeroVar(pml_Training, saveMetrics=TRUE)
+new_pml_Training <- pml_Training[, !nzv_col$nzv]
+
+# remove variables with more than 60% missing values and redundant variables
+na_rec <- sapply(colnames(new_pml_Training), function(x) if(sum(is.na(new_pml_Training[, x])) / nrow(new_pml_Training) > 0.6) {return(TRUE)}else{return(FALSE)})
+new_pml_Training <- new_pml_Training[, !na_rec]
+new_pml_Training <- new_pml_Training[c(-1)]
+
+# check number of variables and observations left
+dim(new_pml_Training)
+
+```
+
+We now have __`r dim(new_pml_Training)`__ training data to build the prediction model.     
+ 
+### Prediction and Validation   
+Base on the number of predictors to predict the manner of exercise (classe), and due to the short time to do this assignment, the 2 most accurate out-of-the-box classifiers will be used to train a model to predict the exercises : Gradient Boosting method and Random Forest.   
+
+#### a) Using Gradient Boosting on the cleansed training data  
+-- Fit the model with Gradient Boosting method and cross validate with 10-fold cross validation to predict the manner of exercise (classe).    
+
+```{r setcluster1,echo=FALSE}
+## setup clustering to run model training
+require(parallel)
+require(doParallel)
+cl <- makeCluster(detectCores() -1) 
+registerDoParallel(cl)
+```
+
+```{r gbm, tidy=TRUE}
+set.seed(100)
+FitModelgbm <- train(classe ~ ., method="gbm", data=new_pml_Training,verbose=FALSE,trControl=trainControl(method="cv",number = 10,classProbs=TRUE, savePredictions=TRUE, allowParallel=TRUE))
+
+print (FitModelgbm)
+
+save(FitModelgbm, file="gbmTraining.RData")
+```
+
+```{r stopcluster1,echo=FALSE}
+stopCluster(cl)
+```
+
+#### b) Using Random Forest on the cleansed training data 
+-- Fit the model with Random Forest and cross validate with 10-fold cross validation to predict the manner of exercise (classe).    
+
+```{r setcluster2,echo=FALSE}
+## setup clustering to run model training
+require(parallel)
+require(doParallel)
+cl <- makeCluster(detectCores() -1) 
+registerDoParallel(cl)
+```
+
+```{r rf, tidy=TRUE}
+set.seed(100)
+FitModelRF <- train(classe ~ ., method="rf", data=new_pml_Training, importance=TRUE, trControl=trainControl(method = "cv", number = 10,classProbs=TRUE, savePredictions=TRUE, allowParallel=TRUE))
+
+print(FitModelRF)
+
+save(FitModelRF, file="rfTraining.RData")
+
+```
+
+```{r stopcluster2,echo=FALSE}
+stopCluster(cl)
+```
+
+```{r CM, tidy=TRUE}
+## FitModelgbm confusion matrix
+confusionMatrix(predict(FitModelgbm, new_pml_Training), sample(new_pml_Training$classe))
+
+## FitModelRF confusion matrix
+confusionMatrix(predict(FitModelRF, new_pml_Training), sample(new_pml_Training$classe))
+
+```
+
+The Accuracy of the Random Forest model is higher than that of the Gradient Boosting method. Hence the final Model is FitModelRF.  
+
+The final model is :  
+```{r rf, tidy=TRUE, echo=FALSE}
+FitModelRF$finalModel
+```
+  
+### Generate predicted answers  
+```{r predict, tidy=TRUE}
+PredAnswers <- predict(FitModelRF, pml_Testing)
+
+pml_write_files = function(x){
+  n = length(x)
+    for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(PredAnswers)
+```
+
+### Appendix  
+
+```{r explore, message=FALSE, tidy=TRUE, warning=FALSE}
+## Display Structure and Summary of The Training data (pml_Training).
+str(pml_Training)
+
+summary(pml_Training)
+
+```
+
